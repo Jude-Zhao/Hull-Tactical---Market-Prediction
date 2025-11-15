@@ -121,18 +121,29 @@ def train_model():
     print(f"验证集RMSE: {val_rmse:.6f}")
 
 def determine_investment_ratio(predicted_return):
-    """根据预测的收益率决定投资比例"""
-    # 简单的策略：预测收益越高，投资比例越大
-    # 预测收益为负时，投资比例为0（空仓）
-    # 预测收益为正时，投资比例在0-2之间线性增长
+    """根据预测的收益率决定投资比例 - 反函数策略"""
+    # 反函数策略：预测收益越高，投资比例越小
+    # 使用 ln(1 + β/r_pred) 的形式，其中β是调节参数
     
-    if predicted_return <= 0:
-        return 0.0  # 空仓
+    # 设置调节参数β，控制反函数的敏感度
+    beta = 0.01  # 可以根据实际效果调整
+    
+    # 防止除零错误，设置最小预测收益阈值
+    min_return = 1e-6
+    abs_predicted_return = max(abs(predicted_return), min_return)
+    
+    # 使用反函数关系：ln(1 + β/|r_pred|)
+    # 对于正收益：投资比例随收益增加而减小
+    if predicted_return > 0:
+        # 正收益：投资比例 = ln(1 + β/r_pred) ，但反向缩放
+        ratio = np.log(1 + beta / predicted_return)
+        # 将比例映射到 [0, 2] 范围，高正收益对应低投资比例
+        ratio = 2.0 - min(ratio * 1, 2.0)  # 乘以100增强敏感度
     else:
-        # 使用sigmoid函数将预测收益映射到0-2之间
-        # 调整参数以控制敏感度
-        ratio = 2 / (1 + np.exp(-predicted_return * 100))
-        return min(max(ratio, 0.0), 2.0)  # 确保在0-2范围内
+        ratio = 0
+    
+    return max(min(ratio, 2.0), 0.0)  # 确保在 [0, 2] 范围内
+    
 
 def predict(test: pl.DataFrame) -> float:
     """用您的推理代码替换此函数。
