@@ -429,16 +429,16 @@ def optimize_investment_params(return_prediction, volatility_prediction, up_prob
     
     # ========== 定义参数搜索网格 ==========
     # alpha 控制整体持仓大小，beta 控制收益-持仓非线性关系
-    alpha_range = np.arange(0.5, 2.5, 0.1)  # alpha 从 0.5 到 2.5，步长 0.1
-    beta_range = np.arange(0.001, 0.05, 0.002)  # beta 从 0.001 到 0.05，步长 0.002
+    alpha_range = np.arange(0.0015, 0.006, 0.0001)  # alpha 从 0.0015 到 0.0045，步长 0.0001
+    beta_range = np.arange(0.01, 0.1, 0.001)  # beta 从 0.0050 到 0.01，步长 0.0001
     
     print(f"alpha 搜索范围: {alpha_range[0]:.3f} 到 {alpha_range[-1]:.3f}，共 {len(alpha_range)} 个值")
     print(f"beta 搜索范围: {beta_range[0]:.3f} 到 {beta_range[-1]:.3f}，共 {len(beta_range)} 个值")
     print(f"总共需要测试 {len(alpha_range) * len(beta_range)} 种参数组合")
     
     best_score = -float('inf')  # 初始化最佳评分为负无穷
-    best_alpha = None
-    best_beta = None
+    best_alpha = -1000
+    best_beta = -1000
     all_results = []  # 记录所有结果
     
     total_combinations = len(alpha_range) * len(beta_range)
@@ -471,7 +471,11 @@ def optimize_investment_params(return_prediction, volatility_prediction, up_prob
                     'row_id': test_data['row_id'].values if 'row_id' in test_data.columns else range(len(investment_ratios)),
                     'prediction': investment_ratios
                 })
-                
+
+                # 统计prediction中的none值
+                none_count = submission_data['prediction'].isnull().sum()
+                print(f"当前组合参数 (alpha={alpha:.3f}, beta={beta:.3f}) 生成的提交数据长度: {len(submission_data)}")
+                print(f"缺失值prediction总数: {none_count}")
                 # 调用 score 函数进行评分
                 current_score = score(
                     solution=test_data,
@@ -654,102 +658,3 @@ def evaluate_model(model, X_test, y_test):
     plt.close()
     
     return metrics
-
-
-def main():
-    """
-    主函数，整合所有功能进行模型训练和评估
-    """
-    print("=== XGBoost模型测试脚本 ===")
-    
-    # 数据路径 - 根据实际情况调整
-    # 首先尝试读取本地数据
-    local_train_path = '../../train.csv'
-    # 如果本地数据不存在，则使用Kaggle路径（用于兼容性）
-    train_path = local_train_path if os.path.exists(local_train_path) else '/kaggle/input/hull-tactical-market-prediction/train.csv'
-    
-    try:
-        # 1. 数据加载和预处理
-        X_train, X_test, y_train, y_test, feature_columns, _ = load_and_preprocess_data(train_path)
-        
-        # 2. 特征筛选
-        X_train_selected, X_test_selected, selected_features = feature_selection(
-            X_train, X_test, y_train, feature_columns, top_n=20
-        )
-        
-        # 3. 超参数筛选（可选，如果数据集较大可以注释掉以节省时间）
-        # best_params = hyperparameter_tuning(X_train_selected, y_train)
-        
-        # 4. 训练模型
-        # 使用默认参数或最佳参数
-        # model = train_xgboost_model(X_train_selected, y_train, X_test_selected, y_test, best_params)
-        model = train_xgboost_model(X_train_selected, y_train, X_test_selected, y_test)
-        
-        # 5. 进行预测以获取超参数优化所需的数据
-        y_pred = model.predict(X_test_selected)
-        
-        # 为超参数优化准备输入数据
-        # 注意：这些数据需要根据实际项目结构调整
-        volatility_prediction = np.std(y_pred) * np.ones_like(y_pred)  # 简单波动率估计
-        up_probability = np.clip((y_pred > 0).astype(float), 0.1, 0.9)  # 基于预测的上涨概率
-        
-        # 构建测试数据格式（需要根据实际的 test_data 结构调整列名）
-        test_data = pd.DataFrame({
-            'row_id': range(len(y_test)),
-            'forward_returns': y_test.values if hasattr(y_test, 'values') else y_test,
-            'risk_free_rate': np.full(len(y_test), 0.02),  # 假设无风险利率为 2%
-        })
-        
-        # 6. 优化投资比例函数超参数
-        optimization_result = optimize_investment_params(
-            return_prediction=y_pred,
-            volatility_prediction=volatility_prediction,
-            up_probability=up_probability,
-            test_data=test_data
-        )
-        
-        # 7. 使用最优参数评估模型
-        print("\n使用最优超参数重新评估模型...")
-        # 使用最优参数重新计算投资比例和评估指标
-        optimal_investment_ratios = np.array([
-            determine_investment_ratio(
-                return_prediction=ret_pred,
-                volatility_prediction=vol_pred,
-                up_probability=up_prob,
-                alpha=optimization_result['best_alpha'],
-                beta=optimization_result['best_beta']
-            )
-            for ret_pred, vol_pred, up_prob in zip(y_pred, volatility_prediction, up_probability)
-        ])
-        
-        # 构建提交数据并计算最终评分
-        submission_data = pd.DataFrame({
-            'row_id': test_data['row_id'],
-            'prediction': optimal_investment_ratios
-        })
-        
-        final_score = score(
-            solution=test_data,
-            submission=submission_data,
-            row_id_column_name='row_id'
-        )
-        
-        print(f"最终优化后评分: {final_score:.6f}")
-        
-        # 传统的模型评估（可选）
-        metrics = evaluate_model(model, X_test_selected, y_test)
-        
-        # 保存模型
-        model.save_model('xgboost_model.json')
-        print("模型已保存为 'xgboost_model.json'")
-        
-        print("\n=== 测试完成 ===")
-        
-    except Exception as e:
-        print(f"测试过程中出错: {e}")
-        import traceback
-        traceback.print_exc()
-
-
-if __name__ == "__main__":
-    main()

@@ -23,9 +23,14 @@ def score(solution: pd.DataFrame, submission: pd.DataFrame, row_id_column_name: 
 
     if not pandas.api.types.is_numeric_dtype(submission['prediction']):
         raise ParticipantVisibleError('Predictions must be numeric')
+    if submission['prediction'].isna().any():
+        raise ParticipantVisibleError('NaN values detected in submission的predictions')
+    #solution = solution
+    solution = solution.copy(deep=True)
+    solution['position'] = submission['prediction'].values
 
-    solution = solution
-    solution['position'] = submission['prediction']
+    if solution['position'].isna().any():
+        raise ParticipantVisibleError('NaN values detected in position')
 
     if solution['position'].max() > MAX_INVESTMENT:
         raise ParticipantVisibleError(f'Position of {solution["position"].max()} exceeds maximum of {MAX_INVESTMENT}')
@@ -33,10 +38,22 @@ def score(solution: pd.DataFrame, submission: pd.DataFrame, row_id_column_name: 
         raise ParticipantVisibleError(f'Position of {solution["position"].min()} below minimum of {MIN_INVESTMENT}')
 
     solution['strategy_returns'] = solution['risk_free_rate'] * (1 - solution['position']) + solution['position'] * solution['forward_returns']
+    # Check for NaN values in key columns
+    if solution['strategy_returns'].isna().any():
+        raise ParticipantVisibleError('NaN values detected in strategy_returns')
+    if solution['risk_free_rate'].isna().any():
+        raise ParticipantVisibleError('NaN values detected in risk_free_rate')
+    if solution['forward_returns'].isna().any():
+        raise ParticipantVisibleError('NaN values detected in forward_returns')
 
     # Calculate strategy's Sharpe ratio
     strategy_excess_returns = solution['strategy_returns'] - solution['risk_free_rate']
     strategy_excess_cumulative = (1 + strategy_excess_returns).prod()
+    
+    # Check if cumulative product resulted in valid value
+    if pd.isna(strategy_excess_cumulative):
+        raise ParticipantVisibleError('Invalid calculation: strategy_excess_cumulative is NaN')
+    
     strategy_mean_excess_return = (strategy_excess_cumulative) ** (1 / len(solution)) - 1
     strategy_std = solution['strategy_returns'].std()
 
@@ -49,8 +66,17 @@ def score(solution: pd.DataFrame, submission: pd.DataFrame, row_id_column_name: 
     # Calculate market return and volatility
     market_excess_returns = solution['forward_returns'] - solution['risk_free_rate']
     market_excess_cumulative = (1 + market_excess_returns).prod()
+    
+    # Check if market cumulative product resulted in valid value
+    if pd.isna(market_excess_cumulative):
+        raise ParticipantVisibleError('Invalid calculation: market_excess_cumulative is NaN')
+    
     market_mean_excess_return = (market_excess_cumulative) ** (1 / len(solution)) - 1
     market_std = solution['forward_returns'].std()
+    
+    # Check if market_std is a valid value
+    if pd.isna(market_std):
+        raise ParticipantVisibleError('Invalid calculation: market_std is NaN')
 
     market_volatility = float(market_std * np.sqrt(trading_days_per_yr) * 100)
 
@@ -70,4 +96,9 @@ def score(solution: pd.DataFrame, submission: pd.DataFrame, row_id_column_name: 
 
     # Adjust the Sharpe ratio by the volatility and return penalty
     adjusted_sharpe = sharpe / (vol_penalty * return_penalty)
+    
+    # Check if adjusted_sharpe is NaN
+    if pd.isna(adjusted_sharpe):
+        raise ParticipantVisibleError('Evaluation metric resulted in NaN value')
+    
     return min(float(adjusted_sharpe), 1_000_000)
